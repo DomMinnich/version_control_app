@@ -1,8 +1,10 @@
 import os
 import sys
-import subprocess  # Re-add this import
-from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint
-from PyQt5.QtGui import QPixmap, QFont
+import subprocess
+import datetime
+import json
+from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint, pyqtSignal
+from PyQt5.QtGui import QPixmap, QFont, QIcon
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -13,11 +15,16 @@ from PyQt5.QtWidgets import (
     QWidget,
     QProgressBar,
     QFrame,
-    QStackedWidget,  # Update QStackedWidget import
+    QStackedWidget,
+    QScrollArea,
+    QToolTip,
+    QSizePolicy,
 )
 from updater import get_local_version, get_remote_version, download_new_version
 
 APPS_FOLDER = os.path.join(os.getcwd(), "apps")
+LOGS_FOLDER = os.path.join(os.getcwd(), "logs")
+ERROR_LOG_FILE = os.path.join(LOGS_FOLDER, "error_log.json")
 
 APPS_CONFIG = [
     {
@@ -41,6 +48,14 @@ class AppControl(QMainWindow):
         self.setWindowTitle("App Version Control")
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet("background-color: #23263A;")
+
+        # Create logs directory if it doesn't exist
+        os.makedirs(LOGS_FOLDER, exist_ok=True)
+
+        # Initialize error log if it doesn't exist
+        if not os.path.exists(ERROR_LOG_FILE):
+            with open(ERROR_LOG_FILE, "w") as f:
+                json.dump([], f)
 
         # Main layout
         self.central_layout = QHBoxLayout()
@@ -76,6 +91,7 @@ class AppControl(QMainWindow):
 
         # Add pages to content area
         self.create_home_page()
+        self.create_error_logs_page()
         self.create_about_page()
         self.create_settings_page()
 
@@ -91,6 +107,7 @@ class AppControl(QMainWindow):
 
         # Sidebar buttons
         self.create_sidebar_button("Home", self.show_home_page)
+        self.create_sidebar_button("Error Logs", self.show_error_logs_page)
         self.create_sidebar_button("About", self.show_about_page)
         self.create_sidebar_button("Settings", self.show_settings_page)
         self.create_sidebar_button("Exit", self.exit_application)
@@ -189,6 +206,87 @@ class AppControl(QMainWindow):
         self.add_footer(layout)
         settings_page.setLayout(layout)
         self.content_area.addWidget(settings_page)
+
+    def create_error_logs_page(self):
+        """
+        Create the Error Logs page to view application errors.
+        """
+        error_page = QWidget()
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignTop)
+
+        # Header
+        header = QLabel("Error Logs")
+        header.setFont(QFont("Arial", 24, QFont.Bold))
+        header.setStyleSheet("color: #FFFFFF; margin-bottom: 20px;")
+        header.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header)
+
+        # Scrollable area for logs
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet(
+            """
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:vertical {
+                background-color: #2A2D45;
+                width: 15px;
+                margin: 15px 3px 15px 3px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #44475A;
+                min-height: 30px;
+                border-radius: 4px;
+            }
+        """
+        )
+
+        # Container for logs
+        self.logs_container = QWidget()
+        self.logs_layout = QVBoxLayout(self.logs_container)
+        self.logs_layout.setAlignment(Qt.AlignTop)
+        self.logs_layout.setSpacing(10)
+
+        # Load and display logs
+        self.load_error_logs()
+
+        scroll_area.setWidget(self.logs_container)
+        layout.addWidget(scroll_area)
+
+        # Button to clear logs
+        clear_logs_btn = QPushButton("Clear All Logs")
+        clear_logs_btn.setFont(QFont("Arial", 12))
+        clear_logs_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #FF5555;
+                color: #FFFFFF;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QPushButton:hover {
+                background-color: #FF6E6E;
+            }
+        """
+        )
+        clear_logs_btn.clicked.connect(self.clear_error_logs)
+        clear_logs_btn.setCursor(Qt.PointingHandCursor)
+
+        # Center the button
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.addStretch()
+        btn_layout.addWidget(clear_logs_btn)
+        btn_layout.addStretch()
+        layout.addWidget(btn_container)
+
+        self.add_footer(layout)
+        error_page.setLayout(layout)
+        self.content_area.addWidget(error_page)
 
     def add_footer(self, layout):
         """
@@ -402,11 +500,15 @@ class AppControl(QMainWindow):
     def show_home_page(self):
         self.content_area.setCurrentIndex(0)
 
-    def show_about_page(self):
+    def show_error_logs_page(self):
+        self.load_error_logs()  # Reload logs each time the page is shown
         self.content_area.setCurrentIndex(1)
 
-    def show_settings_page(self):
+    def show_about_page(self):
         self.content_area.setCurrentIndex(2)
+
+    def show_settings_page(self):
+        self.content_area.setCurrentIndex(3)
 
     def exit_application(self):
         self.close()
@@ -467,7 +569,10 @@ class AppControl(QMainWindow):
             self.app_widgets[app_name]["update_button"].setVisible(False)
             self.app_widgets[app_name]["launch_button"].setVisible(True)
         except Exception as e:
-            label.setText(f"{app_name}: Update failed: {str(e)}")
+            # Log the detailed error
+            self.log_error(app_name, str(e))
+            # Show simplified error message
+            label.setText(f"{app_name}: Error occurred. Check logs.")
         finally:
             progress_bar.setVisible(False)
 
@@ -492,6 +597,231 @@ class AppControl(QMainWindow):
             self.app_widgets[app_name]["label"].setText(
                 f"{app_name}: No version available to launch."
             )
+
+    def load_error_logs(self):
+        """Load and display error logs in a collapsible format"""
+        # Clear existing logs
+        while self.logs_layout.count():
+            item = self.logs_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # If log file doesn't exist, create it
+        if not os.path.exists(ERROR_LOG_FILE):
+            with open(ERROR_LOG_FILE, "w") as f:
+                json.dump([], f)
+
+        # Load logs
+        try:
+            with open(ERROR_LOG_FILE, "r") as f:
+                logs = json.load(f)
+
+            if not logs:
+                no_logs = QLabel("No errors have been logged yet")
+                no_logs.setFont(QFont("Arial", 14))
+                no_logs.setStyleSheet("color: #CCCCCC;")
+                no_logs.setAlignment(Qt.AlignCenter)
+                self.logs_layout.addWidget(no_logs)
+                return
+
+            # Group logs by date
+            logs_by_date = {}
+            for log in logs:
+                date = log.get("date", "").split(" ")[0]  # Get just the date part
+                if date not in logs_by_date:
+                    logs_by_date[date] = []
+                logs_by_date[date].append(log)
+
+            # Sort dates and display newest first
+            for date in sorted(logs_by_date.keys(), reverse=True):
+                # Create collapsible section for each date
+                date_header = CollapsibleSection(date)
+
+                # Add each log entry for this date
+                for log in logs_by_date[date]:
+                    time = (
+                        log.get("date", "").split(" ")[1]
+                        if " " in log.get("date", "")
+                        else ""
+                    )
+                    app_name = log.get("app", "Unknown")
+                    error_msg = log.get("error", "Unknown error")
+
+                    # Create log entry widget
+                    entry = LogEntryWidget(time, app_name, error_msg)
+                    date_header.addWidget(entry)
+
+                self.logs_layout.addWidget(date_header)
+
+        except Exception as e:
+            error_label = QLabel(f"Error loading logs: {str(e)}")
+            error_label.setStyleSheet("color: #FF5555;")
+            self.logs_layout.addWidget(error_label)
+
+    def clear_error_logs(self):
+        """Clear all error logs"""
+        with open(ERROR_LOG_FILE, "w") as f:
+            json.dump([], f)
+        self.load_error_logs()
+
+    def log_error(self, app_name, error_msg):
+        """Log an error to the error log file"""
+        try:
+            # Create logs directory if it doesn't exist
+            os.makedirs(os.path.dirname(ERROR_LOG_FILE), exist_ok=True)
+
+            # Load existing logs
+            logs = []
+            if os.path.exists(ERROR_LOG_FILE):
+                with open(ERROR_LOG_FILE, "r") as f:
+                    logs = json.load(f)
+
+            # Add new log
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            logs.append({"date": now, "app": app_name, "error": error_msg})
+
+            # Write updated logs
+            with open(ERROR_LOG_FILE, "w") as f:
+                json.dump(logs, f)
+
+        except Exception as e:
+            print(f"Failed to log error: {str(e)}")
+
+
+# Add these new classes at the end of the file
+class CollapsibleSection(QWidget):
+    """A collapsible section widget for grouping errors by date"""
+
+    def __init__(self, title):
+        super().__init__()
+        self.setStyleSheet(
+            """
+            background-color: #2F344B;
+            border-radius: 8px;
+            margin: 2px;
+        """
+        )
+
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        # Header with toggle button
+        self.header = QFrame()
+        self.header.setStyleSheet(
+            """
+            QFrame {
+                background-color: #3C3F58;
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QFrame:hover {
+                background-color: #44475A;
+            }
+        """
+        )
+        self.header.setCursor(Qt.PointingHandCursor)
+
+        header_layout = QHBoxLayout(self.header)
+
+        # Toggle icon
+        self.toggle_icon = QLabel("▼")
+        self.toggle_icon.setStyleSheet("color: #FFFFFF; font-weight: bold;")
+        header_layout.addWidget(self.toggle_icon)
+
+        # Date label
+        self.title_label = QLabel(title)
+        self.title_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.title_label.setStyleSheet("color: #FFFFFF;")
+        header_layout.addWidget(self.title_label)
+
+        header_layout.addStretch()
+
+        # Content container
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(10, 5, 10, 10)
+        self.content_layout.setSpacing(5)
+
+        # Add to main layout
+        self.layout.addWidget(self.header)
+        self.layout.addWidget(self.content)
+
+        # Connect header click to toggle
+        self.header.mousePressEvent = self.toggle_content
+
+        # Default to expanded
+        self.is_expanded = True
+
+    def toggle_content(self, event):
+        self.is_expanded = not self.is_expanded
+        self.content.setVisible(self.is_expanded)
+        self.toggle_icon.setText("▼" if self.is_expanded else "►")
+
+    def addWidget(self, widget):
+        self.content_layout.addWidget(widget)
+
+
+class LogEntryWidget(QFrame):
+    """Widget to display a single log entry with copy functionality"""
+
+    def __init__(self, time, app_name, error_msg):
+        super().__init__()
+        self.error_msg = error_msg
+
+        self.setStyleSheet(
+            """
+            QFrame {
+                background-color: #2A2D45;
+                border-radius: 5px;
+                padding: 10px;
+            }
+            QFrame:hover {
+                background-color: #31344E;
+            }
+        """
+        )
+        self.setCursor(Qt.PointingHandCursor)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # Time and app name
+        header = QHBoxLayout()
+
+        time_label = QLabel(time)
+        time_label.setStyleSheet("color: #AAAAAA; font-weight: bold;")
+        header.addWidget(time_label)
+
+        app_label = QLabel(app_name)
+        app_label.setStyleSheet("color: #FF79C6; font-weight: bold;")
+        app_label.setAlignment(Qt.AlignRight)
+        header.addWidget(app_label)
+
+        layout.addLayout(header)
+
+        # Error message
+        error_label = QLabel(error_msg[:100] + ("..." if len(error_msg) > 100 else ""))
+        error_label.setStyleSheet("color: #F8F8F2;")
+        error_label.setWordWrap(True)
+        layout.addWidget(error_label)
+
+        # Label to show when copied
+        self.copy_label = QLabel("Copied! ✓")
+        self.copy_label.setStyleSheet("color: #50FA7B; font-weight: bold;")
+        self.copy_label.setAlignment(Qt.AlignRight)
+        self.copy_label.hide()
+        layout.addWidget(self.copy_label)
+
+    def mousePressEvent(self, event):
+        # Copy error to clipboard
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.error_msg)
+
+        # Show "Copied!" message briefly
+        self.copy_label.show()
+        QTimer.singleShot(1500, self.copy_label.hide)
 
 
 if __name__ == "__main__":
