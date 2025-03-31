@@ -11,9 +11,18 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint
 from PyQt5.QtGui import QPixmap, QFont, QIcon, QCursor
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QLabel, QPushButton, 
-    QVBoxLayout, QHBoxLayout, QWidget, QProgressBar,
-    QFrame, QStackedWidget, QScrollArea, QSizePolicy
+    QApplication,
+    QMainWindow,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QProgressBar,
+    QFrame,
+    QStackedWidget,
+    QScrollArea,
+    QSizePolicy,
 )
 from updater import get_local_version, get_remote_version, download_new_version
 
@@ -89,6 +98,9 @@ class AppControl(QMainWindow):
         self.create_error_logs_page()
         self.create_about_page()
         self.create_settings_page()
+
+        # Track running processes
+        self.running_processes = {}
 
     def create_sidebar(self):
         """
@@ -611,6 +623,14 @@ class AppControl(QMainWindow):
         """
         Launch the specified app, first decrypting it to a temporary location.
         """
+        # Check if the app is already running
+        if (
+            app_name in self.running_processes
+            and self.running_processes[app_name].poll() is None
+        ):
+            self.app_widgets[app_name]["label"].setText(f"{app_name}: Already running.")
+            return
+
         local_version, local_filename = get_local_version(
             APPS_FOLDER, executable_prefix
         )
@@ -635,14 +655,27 @@ class AppControl(QMainWindow):
                 # Launch the decrypted app
                 process = subprocess.Popen([temp_app_path])
 
+                # Store the process reference for tracking
+                self.running_processes[app_name] = process
+
+                # Update label to indicate app is running
+                self.app_widgets[app_name]["label"].setText(f"{app_name}: Running...")
+
                 # Set up a timer to remove the decrypted app after it launches
                 def cleanup():
                     try:
                         # Check if the process is still running
                         if process.poll() is not None:
-                            # Process has ended, delete the temporary file
+                            # Process has ended, clean up
                             if os.path.exists(temp_app_path):
                                 os.remove(temp_app_path)
+                            # Remove from running processes
+                            if app_name in self.running_processes:
+                                del self.running_processes[app_name]
+                            # Update label
+                            self.app_widgets[app_name]["label"].setText(
+                                f"{app_name}: Ready to launch."
+                            )
                             return
                         # If still running, check again later
                         QTimer.singleShot(5000, cleanup)
