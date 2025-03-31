@@ -1,24 +1,19 @@
 import os
 import sys
-import subprocess
-import datetime
 import json
-from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint, pyqtSignal
-from PyQt5.QtGui import QPixmap, QFont, QIcon
+import datetime
+import subprocess
+import base64
+from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint
+from PyQt5.QtGui import QPixmap, QFont, QIcon, QCursor
 from PyQt5.QtWidgets import (
-    QApplication,
-    QMainWindow,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QHBoxLayout,
-    QWidget,
-    QProgressBar,
-    QFrame,
-    QStackedWidget,
-    QScrollArea,
-    QToolTip,
-    QSizePolicy,
+    QApplication, QMainWindow, QLabel, QPushButton, 
+    QVBoxLayout, QHBoxLayout, QWidget, QProgressBar,
+    QFrame, QStackedWidget, QScrollArea, QSizePolicy
 )
 from updater import get_local_version, get_remote_version, download_new_version
 
@@ -583,16 +578,85 @@ class AppControl(QMainWindow):
         percentage = int((current / total) * 100)
         progress_bar.setValue(percentage)
 
+    def generate_key(self, password, salt):
+        """Generate an encryption key from password and salt"""
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=100000,
+            backend=default_backend(),
+        )
+        return base64.urlsafe_b64encode(kdf.derive(password))
+
+    def encrypt_file(self, input_file, output_file, key):
+        """Encrypt a file using Fernet symmetric encryption"""
+        fernet = Fernet(key)
+        with open(input_file, "rb") as f:
+            data = f.read()
+        encrypted = fernet.encrypt(data)
+        with open(output_file, "wb") as f:
+            f.write(encrypted)
+
+    def decrypt_file(self, input_file, output_file, key):
+        """Decrypt a file using Fernet symmetric encryption"""
+        fernet = Fernet(key)
+        with open(input_file, "rb") as f:
+            encrypted = f.read()
+        decrypted = fernet.decrypt(encrypted)
+        with open(output_file, "wb") as f:
+            f.write(decrypted)
+
     def launch_app(self, app_name, executable_prefix):
         """
-        Launch the specified app.
+        Launch the specified app, first decrypting it to a temporary location.
         """
         local_version, local_filename = get_local_version(
             APPS_FOLDER, executable_prefix
         )
         if local_filename:
-            app_path = os.path.join(APPS_FOLDER, local_filename)
-            subprocess.Popen([app_path])
+            # Path to encrypted app
+            encrypted_app_path = os.path.join(APPS_FOLDER, local_filename)
+
+            # Create a temporary path for the decrypted app
+            temp_dir = os.path.join(os.environ["TEMP"], "app_control_temp")
+            os.makedirs(temp_dir, exist_ok=True)
+            temp_app_path = os.path.join(temp_dir, f"temp_{local_filename}")
+
+            try:
+                # Use a constant salt and password (in a real app, consider more secure approaches)
+                salt = b"app_control_salt"
+                password = b"this_is_a_secret_password_for_app_control"
+                key = self.generate_key(password, salt)
+
+                # Decrypt the app to the temporary location
+                self.decrypt_file(encrypted_app_path, temp_app_path, key)
+
+                # Launch the decrypted app
+                process = subprocess.Popen([temp_app_path])
+
+                # Set up a timer to remove the decrypted app after it launches
+                def cleanup():
+                    try:
+                        # Check if the process is still running
+                        if process.poll() is not None:
+                            # Process has ended, delete the temporary file
+                            if os.path.exists(temp_app_path):
+                                os.remove(temp_app_path)
+                            return
+                        # If still running, check again later
+                        QTimer.singleShot(5000, cleanup)
+                    except Exception as e:
+                        print(f"Cleanup error: {e}")
+
+                # Start the cleanup timer
+                QTimer.singleShot(5000, cleanup)
+
+            except Exception as e:
+                self.log_error(app_name, f"Failed to launch app: {str(e)}")
+                self.app_widgets[app_name]["label"].setText(
+                    f"{app_name}: Launch failed. See error logs."
+                )
         else:
             self.app_widgets[app_name]["label"].setText(
                 f"{app_name}: No version available to launch."
