@@ -108,7 +108,7 @@ class AppControl(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("App Version Control")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1600, 800)
         self.setStyleSheet("background-color: #23263A;")
 
         # Ensure necessary folders exist
@@ -293,10 +293,80 @@ class AppControl(QMainWindow):
         header.setStyleSheet("color: #FFFFFF; margin-bottom: 20px;")
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
+
+        # Create a scrollable area for app cards
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setStyleSheet(
+            """
+            QScrollArea {
+                border: none;
+                background-color: transparent;
+            }
+            QScrollBar:horizontal {
+                background-color: #2A2D45;
+                height: 15px;
+                margin: 3px 15px 3px 15px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #44475A;
+                min-width: 30px;
+                border-radius: 4px;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 10px;
+                border: none;
+                background: none;
+            }
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+                background: none;
+            }
+        """
+        )
+
+        # Container widget for app cards
+        apps_container = QWidget()
+        apps_layout = QHBoxLayout(apps_container)
+        apps_layout.setSpacing(20)
+        apps_layout.setAlignment(Qt.AlignLeft)
+        apps_layout.setContentsMargins(10, 5, 10, 5)
+
         self.app_widgets = {}
         # Create a card for each app from dynamic configuration
         for app in self.apps_config:
-            layout.addWidget(self.create_app_card(app))
+            apps_layout.addWidget(self.create_app_card(app))
+
+        # Add some spacing at the end for better scrolling experience
+        spacer = QWidget()
+        spacer.setFixedWidth(10)
+        apps_layout.addWidget(spacer)
+
+        # Only show scrollbar if more than 2 apps
+        if len(self.apps_config) > 2:
+            scroll_area.setWidget(apps_container)
+            layout.addWidget(scroll_area)
+        else:
+            # For 2 or fewer apps, just add them directly to the layout
+            for app in self.apps_config:
+                layout.addWidget(self.create_app_card(app))
+
+        # Add indicator dots for navigation when there are more than 2 apps
+        if len(self.apps_config) > 2:
+            dots_widget = QWidget()
+            dots_layout = QHBoxLayout(dots_widget)
+            dots_layout.setAlignment(Qt.AlignCenter)
+            dots_layout.setSpacing(10)
+
+            for i in range(len(self.apps_config)):
+                dot = QLabel("•")
+                dot.setStyleSheet("color: #6272A4; font-size: 20px;")
+                dots_layout.addWidget(dot)
+
+            layout.addWidget(dots_widget)
+
         self.add_footer(layout)
         home_page.setLayout(layout)
         self.content_area.addWidget(home_page)
@@ -329,7 +399,7 @@ class AppControl(QMainWindow):
         title.setFont(QFont("Arial", 24, QFont.Bold))
         title.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title)
-        placeholder = QLabel("Settings options go here...")
+        placeholder = QLabel("Settings...")
         placeholder.setFont(QFont("Arial", 16))
         placeholder.setStyleSheet("color: #CCCCCC;")
         layout.addWidget(placeholder)
@@ -586,7 +656,7 @@ class AppControl(QMainWindow):
                 update_button.setVisible(False)
                 launch_button.setVisible(True)
         else:
-            label.setText(f"{app_name}: Not installed. Please update.")
+            label.setText(f"{app_name}: Not installed.")
             update_button.setVisible(True)
             launch_button.setVisible(False)
 
@@ -795,14 +865,14 @@ class AppControl(QMainWindow):
         """
         Check if we can connect to the server and update the status indicator.
         """
-      #  print("Starting server connection check...")
+        #  print("Starting server connection check...")
 
         def do_check():
             try:
-       #         print("Attempting to connect to server...")
+                #         print("Attempting to connect to server...")
                 response = requests.get(SERVER_URL, timeout=2)
                 if response.status_code == 200:
-       #             print(f"Connection successful: {response.status_code}")
+                    #             print(f"Connection successful: {response.status_code}")
                     connected = True
                 else:
                     print(f"Server returned error status: {response.status_code}")
@@ -830,7 +900,7 @@ class AppControl(QMainWindow):
             self._set_disconnected_status()
 
     def _set_connected_status(self):
-     #   print("[DEBUG] UI updated: CONNECTED")
+        #   print("[DEBUG] UI updated: CONNECTED")
         self.connection_status.setStyleSheet(
             """
             QFrame {
