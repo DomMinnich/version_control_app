@@ -2,3 +2,4 @@ requests
 tqdm
 PyQt5
 cryptography
+pillow

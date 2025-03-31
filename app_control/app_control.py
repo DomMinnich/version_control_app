@@ -5,14 +5,9 @@ import datetime
 import subprocess
 import base64
 import threading
-import time
 import requests
-from cryptography.fernet import Fernet
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint, pyqtSignal
-from PyQt5.QtGui import QPixmap, QFont, QIcon, QCursor
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -25,70 +20,135 @@ from PyQt5.QtWidgets import (
     QFrame,
     QStackedWidget,
     QScrollArea,
-    QSizePolicy,
 )
 from updater import get_local_version, get_remote_version, download_new_version
+from cryptography.fernet import Fernet
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+# Global paths and server URL
 APPS_FOLDER = os.path.join(os.getcwd(), "apps")
 LOGS_FOLDER = os.path.join(os.getcwd(), "logs")
 ERROR_LOG_FILE = os.path.join(LOGS_FOLDER, "error_log.json")
-
-APPS_CONFIG = [
-    {
-        "name": "WorkForce",
-        "executable_prefix": "WorkForce_",
-        "icon": "assets/workforce_icon.png",
-    },
-    {
-        "name": "PersonnelManagement",
-        "executable_prefix": "PersonnelManagement_",
-        "icon": "assets/personnel_icon.png",
-    },
-]
+SERVER_URL = "http://127.0.0.1:5000"  # Update as needed
 
 
+# ---------------------- Helper Functions ---------------------- #
+def fetch_apps_config():
+    """
+    Fetch the apps configuration from the server.
+    Returns a list of app configurations.
+    """
+    try:
+        response = requests.get(f"{SERVER_URL}/apps", timeout=5)
+        response.raise_for_status()
+        config = response.json().get("apps", [])
+        # Preserve the original asset filename by copying to "icon_filename"
+        for app in config:
+            if "icon" in app:
+                app["icon_filename"] = app["icon"]
+        return config
+    except Exception as e:
+        print("Error fetching app configuration from server:", e)
+        # Fallback configuration if fetching fails
+        fallback = [
+            {
+                "name": "WorkForce",
+                "executable_prefix": "WorkForce_",
+                "icon": "workforce_icon.png",
+                "icon_filename": "workforce_icon.png",
+            },
+            {
+                "name": "PersonnelManagement",
+                "executable_prefix": "PersonnelManagement_",
+                "icon": "personnel_icon.png",
+                "icon_filename": "personnel_icon.png",
+            },
+        ]
+        return fallback
+
+
+def download_app_asset(asset_filename, local_folder):
+    """
+    Downloads the app's picture from the server and saves it in the local assets folder.
+    Returns the path to a default icon if download fails.
+    """
+    local_path = os.path.join(local_folder, asset_filename)
+    default_icon = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "assets", "default_app_icon.png"
+    )
+
+    try:
+        asset_url = f"{SERVER_URL}/assets/{asset_filename}"
+        response = requests.get(asset_url, timeout=5)
+        response.raise_for_status()
+        with open(local_path, "wb") as f:
+            f.write(response.content)
+        print(f"Downloaded/updated asset: {asset_filename}")
+        return local_path
+    except Exception as e:
+        print(f"Failed to update asset {asset_filename}: {e}")
+        # Create a default icon if it doesn't exist
+        if not os.path.exists(default_icon):
+            os.makedirs(os.path.dirname(default_icon), exist_ok=True)
+            from PIL import Image
+
+            img = Image.new("RGB", (100, 100), color=(99, 102, 241))
+            img.save(default_icon)
+
+        return default_icon
+
+
+# ---------------------- Main Application ---------------------- #
 class AppControl(QMainWindow):
-    connection_status_changed = pyqtSignal(
-        bool
-    )  # Signal to safely update UI from thread
+    connection_status_changed = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
 
-        # Window properties
         self.setWindowTitle("App Version Control")
         self.setGeometry(100, 100, 1200, 800)
         self.setStyleSheet("background-color: #23263A;")
 
-        # Create logs directory if it doesn't exist
+        # Ensure necessary folders exist
+        os.makedirs(APPS_FOLDER, exist_ok=True)
         os.makedirs(LOGS_FOLDER, exist_ok=True)
-
-        # Initialize error log if it doesn't exist
         if not os.path.exists(ERROR_LOG_FILE):
             with open(ERROR_LOG_FILE, "w") as f:
                 json.dump([], f)
 
-        # Connection status
+        # Dynamic apps configuration from the server
+        self.apps_config = fetch_apps_config()
+
+        # Ensure local assets folder exists and update assets using the original filename
+        self.assets_folder = os.path.join(os.getcwd(), "assets")
+        os.makedirs(self.assets_folder, exist_ok=True)
+        for app in self.apps_config:
+            # Use the stored icon_filename rather than the possibly updated "icon" field.
+            local_icon_path = download_app_asset(
+                app["icon_filename"], self.assets_folder
+            )
+            app["icon"] = local_icon_path
+
+        # Setup server connection checking
         self.server_connected = False
         self.connection_check_timer = QTimer(self)
         self.connection_check_timer.timeout.connect(self.check_server_connection)
-        self.connection_check_timer.start(10000)  # Check every 10 seconds
-
-        # Connect the signal to update connection status
+        self.connection_check_timer.start(10000)
         self.connection_status_changed.connect(self.update_connection_status)
 
-        # Main layout
+        # Setup main layout
         self.central_layout = QHBoxLayout()
         central_widget = QWidget()
         central_widget.setLayout(self.central_layout)
         self.setCentralWidget(central_widget)
 
-        # Sidebar
+        # Create sidebar
         self.sidebar_layout = QVBoxLayout()
         self.sidebar_layout.setSpacing(20)
         self.sidebar_layout.setAlignment(Qt.AlignTop)
         self.create_sidebar()
-
         sidebar_container = QFrame()
         sidebar_container.setLayout(self.sidebar_layout)
         sidebar_container.setStyleSheet(
@@ -102,41 +162,38 @@ class AppControl(QMainWindow):
         )
         self.central_layout.addWidget(sidebar_container, 0)
 
-        # Content Area
+        # Create content area
         self.content_area = QStackedWidget()
         self.content_area.setStyleSheet(
             "background-color: #2A2D45; border-radius: 15px;"
         )
         self.central_layout.addWidget(self.content_area, 1)
 
-        # Add pages to content area
+        # Create pages
         self.create_home_page()
         self.create_error_logs_page()
         self.create_about_page()
         self.create_settings_page()
 
-        # Track running processes
         self.running_processes = {}
-
-        # Initialize server connection
         self.check_server_connection()
-
-        # Delay the initial connection check slightly to let GUI finish drawing
         QTimer.singleShot(500, self.check_server_connection)
 
+    # ---------------------- Sidebar & Navigation ---------------------- #
     def create_sidebar(self):
-        """
-        Create a sidebar with navigation options.
-        """
-        # App logo or icon
+        # Logo
         logo = QLabel()
-        logo.setPixmap(QPixmap("assets/logo.png").scaled(100, 100, Qt.KeepAspectRatio))
+        logo.setPixmap(
+            QPixmap(os.path.join("assets", "logo.png")).scaled(
+                100, 100, Qt.KeepAspectRatio
+            )
+        )
         logo.setAlignment(Qt.AlignCenter)
         self.sidebar_layout.addWidget(logo)
 
-        # Connection status indicator with improved readability
+        # Connection status indicator
         self.connection_status = QFrame()
-        self.connection_status.setFixedHeight(60)  # Adjust height for better alignment
+        self.connection_status.setFixedHeight(60)
         self.connection_status.setStyleSheet(
             """
             QFrame {
@@ -145,40 +202,25 @@ class AppControl(QMainWindow):
                 margin: 10px;
                 border: 1px solid #444760;
             }
-            """
+        """
         )
-
         status_layout = QHBoxLayout(self.connection_status)
-        status_layout.setContentsMargins(
-            10, 0, 10, 0
-        )  # Adjust margins for better spacing
-        status_layout.setSpacing(10)  # Add spacing between elements
-        status_layout.setAlignment(Qt.AlignVCenter)  # Ensure vertical alignment
-
-        # Status icon
+        status_layout.setContentsMargins(10, 0, 10, 0)
+        status_layout.setSpacing(10)
+        status_layout.setAlignment(Qt.AlignVCenter)
         self.status_icon = QLabel("●")
-        self.status_icon.setFont(QFont("Arial", 20, QFont.Bold))  # Larger font for icon
-        self.status_icon.setStyleSheet(
-            "color: #FF5555;"
-        )  # Start with disconnected color
+        self.status_icon.setFont(QFont("Arial", 20, QFont.Bold))
+        self.status_icon.setStyleSheet("color: #FF5555;")
         status_layout.addWidget(self.status_icon)
-
-        # Status text
         self.status_text = QLabel("Checking...")
-        self.status_text.setFont(
-            QFont("Arial", 16, QFont.Bold)
-        )  # Slightly larger font for text
+        self.status_text.setFont(QFont("Arial", 16, QFont.Bold))
         self.status_text.setStyleSheet("color: #FFFFFF;")
         status_layout.addWidget(self.status_text)
-
-        # Spacer to push the refresh button to the right
         status_layout.addStretch()
-
-        # Refresh button
         refresh_btn = QPushButton("↻")
         refresh_btn.setToolTip("Check connection")
-        refresh_btn.setFont(QFont("Arial", 14, QFont.Bold))  # Larger font for button
-        refresh_btn.setFixedSize(40, 40)  # Adjusted size for better visibility
+        refresh_btn.setFont(QFont("Arial", 14, QFont.Bold))
+        refresh_btn.setFixedSize(40, 40)
         refresh_btn.setStyleSheet(
             """
             QPushButton {
@@ -189,15 +231,14 @@ class AppControl(QMainWindow):
             QPushButton:hover {
                 background-color: #6272A4;
             }
-            """
+        """
         )
         refresh_btn.setCursor(Qt.PointingHandCursor)
         refresh_btn.clicked.connect(self.check_server_connection_immediate)
         status_layout.addWidget(refresh_btn)
-
         self.sidebar_layout.addWidget(self.connection_status)
 
-        # Sidebar buttons continue as before
+        # Navigation buttons
         self.create_sidebar_button("Home", self.show_home_page)
         self.create_sidebar_button("Error Logs", self.show_error_logs_page)
         self.create_sidebar_button("About", self.show_about_page)
@@ -205,9 +246,6 @@ class AppControl(QMainWindow):
         self.create_sidebar_button("Exit", self.exit_application)
 
     def create_sidebar_button(self, name, action):
-        """
-        Create a sidebar button.
-        """
         btn = QPushButton(name)
         btn.setFont(QFont("Arial", 14))
         btn.setStyleSheet(
@@ -228,42 +266,49 @@ class AppControl(QMainWindow):
         btn.clicked.connect(action)
         self.sidebar_layout.addWidget(btn)
 
+    def show_home_page(self):
+        self.content_area.setCurrentIndex(0)
+
+    def show_error_logs_page(self):
+        self.load_error_logs()
+        self.content_area.setCurrentIndex(1)
+
+    def show_about_page(self):
+        self.content_area.setCurrentIndex(2)
+
+    def show_settings_page(self):
+        self.content_area.setCurrentIndex(3)
+
+    def exit_application(self):
+        self.close()
+
+    # ---------------------- Pages Creation ---------------------- #
     def create_home_page(self):
-        """
-        Create the Home page for managing apps.
-        """
         home_page = QWidget()
         layout = QVBoxLayout()
         layout.setSpacing(20)
         layout.setAlignment(Qt.AlignTop)
-
         header = QLabel("App Management")
         header.setFont(QFont("Arial", 24, QFont.Bold))
         header.setStyleSheet("color: #FFFFFF; margin-bottom: 20px;")
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
-
         self.app_widgets = {}
-        for app in APPS_CONFIG:
+        # Create a card for each app from dynamic configuration
+        for app in self.apps_config:
             layout.addWidget(self.create_app_card(app))
-
         self.add_footer(layout)
         home_page.setLayout(layout)
         self.content_area.addWidget(home_page)
 
     def create_about_page(self):
-        """
-        Create the About page.
-        """
         about_page = QWidget()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignCenter)
-
         title = QLabel("About App Control")
         title.setFont(QFont("Arial", 24, QFont.Bold))
         title.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title)
-
         description = QLabel(
             "App Control is a tool to manage and update your applications seamlessly."
         )
@@ -272,49 +317,35 @@ class AppControl(QMainWindow):
         description.setWordWrap(True)
         description.setAlignment(Qt.AlignCenter)
         layout.addWidget(description)
-
         self.add_footer(layout)
         about_page.setLayout(layout)
         self.content_area.addWidget(about_page)
 
     def create_settings_page(self):
-        """
-        Create the Settings page.
-        """
         settings_page = QWidget()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignTop)
-
         title = QLabel("Settings")
         title.setFont(QFont("Arial", 24, QFont.Bold))
         title.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title)
-
         placeholder = QLabel("Settings options go here...")
         placeholder.setFont(QFont("Arial", 16))
         placeholder.setStyleSheet("color: #CCCCCC;")
         layout.addWidget(placeholder)
-
         self.add_footer(layout)
         settings_page.setLayout(layout)
         self.content_area.addWidget(settings_page)
 
     def create_error_logs_page(self):
-        """
-        Create the Error Logs page to view application errors.
-        """
         error_page = QWidget()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignTop)
-
-        # Header
         header = QLabel("Error Logs")
         header.setFont(QFont("Arial", 24, QFont.Bold))
         header.setStyleSheet("color: #FFFFFF; margin-bottom: 20px;")
         header.setAlignment(Qt.AlignCenter)
         layout.addWidget(header)
-
-        # Scrollable area for logs
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setStyleSheet(
@@ -336,20 +367,13 @@ class AppControl(QMainWindow):
             }
         """
         )
-
-        # Container for logs
         self.logs_container = QWidget()
         self.logs_layout = QVBoxLayout(self.logs_container)
         self.logs_layout.setAlignment(Qt.AlignTop)
         self.logs_layout.setSpacing(10)
-
-        # Load and display logs
         self.load_error_logs()
-
         scroll_area.setWidget(self.logs_container)
         layout.addWidget(scroll_area)
-
-        # Button to clear logs
         clear_logs_btn = QPushButton("Clear All Logs")
         clear_logs_btn.setFont(QFont("Arial", 12))
         clear_logs_btn.setStyleSheet(
@@ -367,38 +391,29 @@ class AppControl(QMainWindow):
         )
         clear_logs_btn.clicked.connect(self.clear_error_logs)
         clear_logs_btn.setCursor(Qt.PointingHandCursor)
-
-        # Center the button
         btn_container = QWidget()
         btn_layout = QHBoxLayout(btn_container)
         btn_layout.addStretch()
         btn_layout.addWidget(clear_logs_btn)
         btn_layout.addStretch()
         layout.addWidget(btn_container)
-
         self.add_footer(layout)
         error_page.setLayout(layout)
         self.content_area.addWidget(error_page)
 
     def add_footer(self, layout):
-        """
-        Add a footer to the given layout.
-        """
         footer = QLabel("Developed by Dominic Minnich")
         footer.setFont(QFont("Arial", 10))
         footer.setStyleSheet("color: #CCCCCC; margin-top: 20px;")
         footer.setAlignment(Qt.AlignCenter)
         layout.addWidget(footer)
 
+    # ---------------------- App Card & Functionality ---------------------- #
     def create_app_card(self, app_config):
-        """
-        Create a card for an individual app.
-        """
         app_name = app_config["name"]
         executable_prefix = app_config["executable_prefix"]
         icon_path = app_config.get("icon", "")
 
-        # Card container
         card = QFrame()
         card.setStyleSheet(
             """
@@ -411,35 +426,33 @@ class AppControl(QMainWindow):
         )
         card_layout = QHBoxLayout()
         card_layout.setContentsMargins(20, 20, 20, 20)
-        card_layout.setAlignment(Qt.AlignLeft)  # Align left for proper icon positioning
-
-        # App Icon - positioned at the left
+        card_layout.setAlignment(Qt.AlignLeft)
+        icon_label = QLabel()
         if os.path.exists(icon_path):
-            icon_label = QLabel()
-            icon_label.setPixmap(
-                QPixmap(icon_path).scaled(100, 100, Qt.KeepAspectRatio)
-            )
-            icon_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            card_layout.addWidget(icon_label)
-
-        # Spacer to push content to center
+            pixmap = QPixmap(icon_path)
+            if not pixmap.isNull():
+                icon_label.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatio))
+            else:
+                print(f"Warning: Null pixmap for {icon_path}")
+                icon_label.setText(app_name[0])
+                icon_label.setStyleSheet(
+                    "background-color: #6272A4; color: white; font-size: 40px; font-weight: bold; border-radius: 50px;"
+                )
+                icon_label.setAlignment(Qt.AlignCenter)
+                icon_label.setFixedSize(100, 100)
+        icon_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        card_layout.addWidget(icon_label)
         card_layout.addStretch(1)
-
-        # App Info and Buttons - in the center
         info_layout = QVBoxLayout()
-        info_layout.setAlignment(Qt.AlignCenter)  # Center the contents vertically
-
-        # App Name Label
+        info_layout.setAlignment(Qt.AlignCenter)
         app_label = QLabel(app_name)
         app_label.setFont(QFont("Arial", 18, QFont.Bold))
         app_label.setStyleSheet("color: #FFFFFF;")
-        app_label.setAlignment(Qt.AlignCenter)  # Center the text
+        app_label.setAlignment(Qt.AlignCenter)
         info_layout.addWidget(app_label)
-
-        # Progress Bar
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
-        progress_bar.setFixedWidth(300)  # Fixed width for consistency
+        progress_bar.setFixedWidth(300)
         progress_bar.setStyleSheet(
             """
             QProgressBar {
@@ -454,14 +467,9 @@ class AppControl(QMainWindow):
         )
         progress_bar.setVisible(False)
         progress_bar.setAlignment(Qt.AlignCenter)
-        info_layout.addWidget(
-            progress_bar, 0, Qt.AlignCenter
-        )  # Center the progress bar
-
-        # Buttons
+        info_layout.addWidget(progress_bar, 0, Qt.AlignCenter)
         button_layout = QHBoxLayout()
-        button_layout.setAlignment(Qt.AlignCenter)  # Center the buttons horizontally
-
+        button_layout.setAlignment(Qt.AlignCenter)
         update_button = self.create_animated_button(
             f"Update {app_name}", "#FF5555", "#FF6E6E"
         )
@@ -470,7 +478,6 @@ class AppControl(QMainWindow):
                 app_name, executable_prefix, app_label, progress_bar
             )
         )
-
         launch_button = self.create_animated_button(
             f"Launch {app_name}", "#6272A4", "#7083C3"
         )
@@ -478,28 +485,20 @@ class AppControl(QMainWindow):
         launch_button.clicked.connect(
             lambda: self.launch_app(app_name, executable_prefix)
         )
-
         button_layout.addWidget(update_button)
         button_layout.addWidget(launch_button)
         info_layout.addLayout(button_layout)
-
-        # Add info layout to card
         card_layout.addLayout(info_layout)
-
-        # Another spacer to balance the layout
         card_layout.addStretch(1)
-
         card.setLayout(card_layout)
-
-        # Store widgets for later use
+        # Store widget references for later updates
         self.app_widgets[app_name] = {
             "label": app_label,
             "progress_bar": progress_bar,
             "update_button": update_button,
             "launch_button": launch_button,
+            "icon_label": icon_label,
         }
-
-        # Initialize app state
         self.initialize_app(
             app_name,
             executable_prefix,
@@ -508,14 +507,9 @@ class AppControl(QMainWindow):
             update_button,
             launch_button,
         )
-
         return card
 
     def create_animated_button(self, text, color, hover_color):
-        """
-        Create an animated button with hover effects and fixed size.
-        For long text, create a scrolling/marquee effect.
-        """
         button = QPushButton(text)
         button.setFont(QFont("Arial", 14))
         button.setStyleSheet(
@@ -533,77 +527,40 @@ class AppControl(QMainWindow):
         """
         )
         button.setCursor(Qt.PointingHandCursor)
-
-        # Set fixed size for all buttons - make them wider
-        button.setFixedWidth(500)  # Increased from 200
+        button.setFixedWidth(500)
         button.setFixedHeight(50)
-
-        # For long text, set up a scrolling effect
         text_width = button.fontMetrics().horizontalAdvance(text)
-        visible_width = button.width() - 40  # Account for padding
-
+        visible_width = button.width() - 40
         if text_width > visible_width:
-            # Store the original text
             button.original_text = text
             button.current_position = 0
             button.text_width = text_width
             button.visible_width = visible_width
-
-            # Create timer for marquee effect
             button.scroll_timer = QTimer(button)
             button.scroll_timer.timeout.connect(
                 lambda btn=button: self.scroll_button_text(btn)
             )
-
-            # Start scrolling when hovered
             button.enterEvent = lambda e, btn=button: self.start_button_scroll(btn)
             button.leaveEvent = lambda e, btn=button: self.stop_button_scroll(btn)
-
         return button
 
     def scroll_button_text(self, button):
-        """Handle scrolling text in buttons"""
         button.current_position += 1
         if button.current_position > len(button.original_text):
             button.current_position = 0
-
-        # Create scrolling effect by showing a segment of text
         visible_text = button.original_text + "    " + button.original_text
         start_pos = button.current_position % (len(button.original_text) + 4)
-        display_text = visible_text[
-            start_pos : start_pos + 20
-        ]  # Show only part of the text
-
+        display_text = visible_text[start_pos : start_pos + 20]
         button.setText(display_text)
 
     def start_button_scroll(self, button):
-        """Start scrolling text when button is hovered"""
         if hasattr(button, "scroll_timer"):
-            button.scroll_timer.start(150)  # Scroll speed in milliseconds
+            button.scroll_timer.start(150)
 
     def stop_button_scroll(self, button):
-        """Stop scrolling and reset text when mouse leaves button"""
         if hasattr(button, "scroll_timer"):
             button.scroll_timer.stop()
-            button.setText(
-                button.original_text[:20]
-            )  # Truncate with ellipsis if needed
-
-    def show_home_page(self):
-        self.content_area.setCurrentIndex(0)
-
-    def show_error_logs_page(self):
-        self.load_error_logs()  # Reload logs each time the page is shown
-        self.content_area.setCurrentIndex(1)
-
-    def show_about_page(self):
-        self.content_area.setCurrentIndex(2)
-
-    def show_settings_page(self):
-        self.content_area.setCurrentIndex(3)
-
-    def exit_application(self):
-        self.close()
+            button.setText(button.original_text[:20])
 
     def initialize_app(
         self,
@@ -614,17 +571,12 @@ class AppControl(QMainWindow):
         update_button,
         launch_button,
     ):
-        """
-        Initialize app state by checking local and remote versions.
-        """
         label.setText(f"{app_name}: Checking local version...")
         local_version, local_filename = get_local_version(
             APPS_FOLDER, executable_prefix
         )
-
         if local_version:
             remote_version, _ = get_remote_version(app_name)
-
             if remote_version > local_version:
                 label.setText(f"{app_name}: Update required.")
                 update_button.setVisible(True)
@@ -639,14 +591,10 @@ class AppControl(QMainWindow):
             launch_button.setVisible(False)
 
     def update_app(self, app_name, executable_prefix, label, progress_bar):
-        """
-        Perform an update for the specified app.
-        """
         try:
             label.setText(f"{app_name}: Updating...")
             progress_bar.setVisible(True)
             progress_bar.setValue(0)
-
             remote_version, remote_str = get_remote_version(app_name)
             download_new_version(
                 APPS_FOLDER,
@@ -656,27 +604,44 @@ class AppControl(QMainWindow):
                     progress_bar, current, total
                 ),
             )
-
+            # After updating the executable, update the asset icon.
+            app_config = next(
+                (a for a in self.apps_config if a["name"] == app_name), None
+            )
+            if app_config:
+                # Use the original asset filename stored in icon_filename.
+                local_icon = download_app_asset(
+                    app_config["icon_filename"], self.assets_folder
+                )
+                app_config["icon"] = local_icon
+                if "icon_label" in self.app_widgets[app_name]:
+                    pixmap = QPixmap(local_icon)
+                    if not pixmap.isNull():
+                        self.app_widgets[app_name]["icon_label"].setPixmap(
+                            pixmap.scaled(100, 100, Qt.KeepAspectRatio)
+                        )
+                    else:
+                        icon_label = self.app_widgets[app_name]["icon_label"]
+                        icon_label.setText(app_name[0])
+                        icon_label.setStyleSheet(
+                            "background-color: #6272A4; color: white; font-size: 40px; font-weight: bold; border-radius: 50px;"
+                        )
+                        icon_label.setAlignment(Qt.AlignCenter)
+                        icon_label.setFixedSize(100, 100)
             label.setText(f"{app_name}: Update complete!")
             self.app_widgets[app_name]["update_button"].setVisible(False)
             self.app_widgets[app_name]["launch_button"].setVisible(True)
         except Exception as e:
-            # Log the detailed error
             self.log_error(app_name, str(e))
-            # Show simplified error message
             label.setText(f"{app_name}: Error occurred. Check logs.")
         finally:
             progress_bar.setVisible(False)
 
     def update_progress_bar(self, progress_bar, current, total):
-        """
-        Update the progress bar during updates.
-        """
         percentage = int((current / total) * 100)
         progress_bar.setValue(percentage)
 
     def generate_key(self, password, salt):
-        """Generate an encryption key from password and salt"""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -687,7 +652,6 @@ class AppControl(QMainWindow):
         return base64.urlsafe_b64encode(kdf.derive(password))
 
     def encrypt_file(self, input_file, output_file, key):
-        """Encrypt a file using Fernet symmetric encryption"""
         fernet = Fernet(key)
         with open(input_file, "rb") as f:
             data = f.read()
@@ -696,7 +660,6 @@ class AppControl(QMainWindow):
             f.write(encrypted)
 
     def decrypt_file(self, input_file, output_file, key):
-        """Decrypt a file using Fernet symmetric encryption"""
         fernet = Fernet(key)
         with open(input_file, "rb") as f:
             encrypted = f.read()
@@ -705,71 +668,45 @@ class AppControl(QMainWindow):
             f.write(decrypted)
 
     def launch_app(self, app_name, executable_prefix):
-        """
-        Launch the specified app, first decrypting it to a temporary location.
-        """
-        # Check if the app is already running
         if (
             app_name in self.running_processes
             and self.running_processes[app_name].poll() is None
         ):
             self.app_widgets[app_name]["label"].setText(f"{app_name}: Already running.")
             return
-
         local_version, local_filename = get_local_version(
             APPS_FOLDER, executable_prefix
         )
         if local_filename:
-            # Path to encrypted app
             encrypted_app_path = os.path.join(APPS_FOLDER, local_filename)
-
-            # Create a temporary path for the decrypted app
             temp_dir = os.path.join(os.environ["TEMP"], "app_control_temp")
             os.makedirs(temp_dir, exist_ok=True)
             temp_app_path = os.path.join(temp_dir, f"temp_{local_filename}")
-
             try:
-                # Use a constant salt and password (in a real app, consider more secure approaches)
                 salt = b"app_control_salt"
                 password = b"this_is_a_secret_password_for_app_control"
                 key = self.generate_key(password, salt)
-
-                # Decrypt the app to the temporary location
                 self.decrypt_file(encrypted_app_path, temp_app_path, key)
-
-                # Launch the decrypted app
                 process = subprocess.Popen([temp_app_path])
-
-                # Store the process reference for tracking
                 self.running_processes[app_name] = process
-
-                # Update label to indicate app is running
                 self.app_widgets[app_name]["label"].setText(f"{app_name}: Running...")
 
-                # Set up a timer to remove the decrypted app after it launches
                 def cleanup():
                     try:
-                        # Check if the process is still running
                         if process.poll() is not None:
-                            # Process has ended, clean up
                             if os.path.exists(temp_app_path):
                                 os.remove(temp_app_path)
-                            # Remove from running processes
                             if app_name in self.running_processes:
                                 del self.running_processes[app_name]
-                            # Update label
                             self.app_widgets[app_name]["label"].setText(
                                 f"{app_name}: Ready to launch."
                             )
                             return
-                        # If still running, check again later
                         QTimer.singleShot(5000, cleanup)
                     except Exception as e:
                         print(f"Cleanup error: {e}")
 
-                # Start the cleanup timer
                 QTimer.singleShot(5000, cleanup)
-
             except Exception as e:
                 self.log_error(app_name, f"Failed to launch app: {str(e)}")
                 self.app_widgets[app_name]["label"].setText(
@@ -780,25 +717,19 @@ class AppControl(QMainWindow):
                 f"{app_name}: No version available to launch."
             )
 
+    # ---------------------- Error Logging ---------------------- #
     def load_error_logs(self):
-        """Load and display error logs in a collapsible format"""
-        # Clear existing logs
         while self.logs_layout.count():
             item = self.logs_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
-
-        # If log file doesn't exist, create it
         if not os.path.exists(ERROR_LOG_FILE):
             with open(ERROR_LOG_FILE, "w") as f:
                 json.dump([], f)
-
-        # Load logs
         try:
             with open(ERROR_LOG_FILE, "r") as f:
                 logs = json.load(f)
-
             if not logs:
                 no_logs = QLabel("No errors have been logged yet")
                 no_logs.setFont(QFont("Arial", 14))
@@ -806,86 +737,58 @@ class AppControl(QMainWindow):
                 no_logs.setAlignment(Qt.AlignCenter)
                 self.logs_layout.addWidget(no_logs)
                 return
-
-            # Group logs by date
             logs_by_date = {}
             for log in logs:
-                date = log.get("date", "").split(" ")[0]  # Get just the date part
+                date = log.get("date", "").split(" ")[0]
                 if date not in logs_by_date:
                     logs_by_date[date] = []
                 logs_by_date[date].append(log)
-
-            # Sort dates and display newest first
             for date in sorted(logs_by_date.keys(), reverse=True):
-                # Create collapsible section for each date
                 date_header = CollapsibleSection(date)
-
-                # Add each log entry for this date
                 for log in logs_by_date[date]:
-                    time = (
+                    time_str = (
                         log.get("date", "").split(" ")[1]
                         if " " in log.get("date", "")
                         else ""
                     )
                     app_name = log.get("app", "Unknown")
                     error_msg = log.get("error", "Unknown error")
-
-                    # Create log entry widget
-                    entry = LogEntryWidget(time, app_name, error_msg)
+                    entry = LogEntryWidget(time_str, app_name, error_msg)
                     date_header.addWidget(entry)
-
                 self.logs_layout.addWidget(date_header)
-
         except Exception as e:
             error_label = QLabel(f"Error loading logs: {str(e)}")
             error_label.setStyleSheet("color: #FF5555;")
             self.logs_layout.addWidget(error_label)
 
     def clear_error_logs(self):
-        """Clear all error logs"""
         with open(ERROR_LOG_FILE, "w") as f:
             json.dump([], f)
         self.load_error_logs()
 
     def log_error(self, app_name, error_msg):
-        """Log an error to the error log file"""
         try:
-            # Create logs directory if it doesn't exist
             os.makedirs(os.path.dirname(ERROR_LOG_FILE), exist_ok=True)
-
-            # Load existing logs
             logs = []
             if os.path.exists(ERROR_LOG_FILE):
                 with open(ERROR_LOG_FILE, "r") as f:
                     logs = json.load(f)
-
-            # Add new log
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             logs.append({"date": now, "app": app_name, "error": error_msg})
-
-            # Write updated logs
             with open(ERROR_LOG_FILE, "w") as f:
                 json.dump(logs, f)
-
         except Exception as e:
             print(f"Failed to log error: {str(e)}")
 
+    # ---------------------- Server Connection Checking ---------------------- #
     def check_server_connection_immediate(self):
-        """
-        Immediately check the server connection status.
-        """
-        # Show checking state
         self.status_text.setText("Checking...")
-        self.status_icon.setStyleSheet("color: #FFCC00;")  # Yellow while checking
-
-        # Clear any existing timers to avoid race conditions
+        self.status_icon.setStyleSheet("color: #FFCC00;")
         if (
             hasattr(self, "connection_check_thread")
             and self.connection_check_thread.is_alive()
         ):
-            return  # Don't start another check if one is already running
-
-        # Force immediate check
+            return
         self.check_server_connection()
 
     def check_server_connection(self):
@@ -897,9 +800,13 @@ class AppControl(QMainWindow):
         def do_check():
             try:
                 print("Attempting to connect to server...")
-                response = requests.get("http://127.0.0.1:5000", timeout=2)
-                connected = True
-                print(f"Connection successful: status code {response.status_code}")
+                response = requests.get(SERVER_URL, timeout=2)
+                if response.status_code == 200:
+                    print(f"Connection successful: {response.status_code}")
+                    connected = True
+                else:
+                    print(f"Server returned error status: {response.status_code}")
+                    connected = False
             except requests.exceptions.ConnectionError:
                 print("Connection refused: Server is not running")
                 connected = False
@@ -910,53 +817,46 @@ class AppControl(QMainWindow):
                 print(f"Connection check failed: {str(e)}")
                 connected = False
 
-            # Emit signal to update GUI safely in main thread
             self.connection_status_changed.emit(connected)
 
         self.connection_check_thread = threading.Thread(target=do_check, daemon=True)
         self.connection_check_thread.start()
 
     def update_connection_status(self, connected):
-        """
-        Update the UI connection status indicator with improved visual feedback.
-        Called safely via Qt signal.
-        """
         self.server_connected = connected
-
         if connected:
             self._set_connected_status()
         else:
             self._set_disconnected_status()
 
     def _set_connected_status(self):
-        """Helper method to update UI for connected status"""
         print("[DEBUG] UI updated: CONNECTED")
         self.connection_status.setStyleSheet(
             """
             QFrame {
                 border-radius: 12px;
-                background-color: rgba(80, 250, 123, 0.15);  /* Green tint background */
+                background-color: rgba(80, 250, 123, 0.15);
                 margin: 5px 10px 10px 10px;
-                border: 1px solid rgba(80, 250, 123, 0.5);  /* Green border */
+                border: 1px solid rgba(80, 250, 123, 0.5);
             }
         """
         )
         self.status_icon.setStyleSheet("color: #50FA7B;")
         self.status_text.setText("Connected")
-        self.status_text.setStyleSheet("color: #50FA7B; font-size: 20px; font-weight: bold;")
-        # Start the connection animation
+        self.status_text.setStyleSheet(
+            "color: #50FA7B; font-size: 20px; font-weight: bold;"
+        )
         self.start_connection_animation()
 
     def _set_disconnected_status(self):
-        """Helper method to update UI for disconnected status"""
         print("[DEBUG] UI updated: DISCONNECTED")
         self.connection_status.setStyleSheet(
             """
             QFrame {
                 border-radius: 12px;
-                background-color: rgba(255, 85, 85, 0.15);  /* Red tint background */
+                background-color: rgba(255, 85, 85, 0.15);
                 margin: 5px 10px 15px 10px;
-                border: 1px solid rgba(255, 85, 85, 0.5);  /* Red border */
+                border: 1px solid rgba(255, 85, 85, 0.5);
             }
         """
         )
@@ -964,38 +864,22 @@ class AppControl(QMainWindow):
         self.status_text.setText("Disconnected")
 
     def start_connection_animation(self):
-        """
-        Start a subtle pulsing animation for the connection indicator when connected.
-        """
-
-        # Use a timer to create a "breathing" effect
         def pulse_animation():
             if not self.server_connected:
                 return
-
-            # Toggle between normal and slight dimming for pulsing effect
             current_style = self.status_icon.styleSheet()
             if "rgba(80, 250, 123, 0.6)" in current_style:
-                self.status_icon.setStyleSheet(
-                    "color: #50FA7B;"
-                )  # Full brightness green
+                self.status_icon.setStyleSheet("color: #50FA7B;")
             else:
-                self.status_icon.setStyleSheet(
-                    "color: rgba(80, 250, 123, 0.6);"
-                )  # Dimmed green
-
-            # Continue animation if still connected
+                self.status_icon.setStyleSheet("color: rgba(80, 250, 123, 0.6);")
             if self.server_connected:
                 QTimer.singleShot(800, pulse_animation)
 
-        # Start the animation
         pulse_animation()
 
 
-# Add these new classes at the end of the file
+# ---------------------- Collapsible Sections for Logs ---------------------- #
 class CollapsibleSection(QWidget):
-    """A collapsible section widget for grouping errors by date"""
-
     def __init__(self, title):
         super().__init__()
         self.setStyleSheet(
@@ -1005,12 +889,9 @@ class CollapsibleSection(QWidget):
             margin: 2px;
         """
         )
-
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
-
-        # Header with toggle button
         self.header = QFrame()
         self.header.setStyleSheet(
             """
@@ -1025,36 +906,22 @@ class CollapsibleSection(QWidget):
         """
         )
         self.header.setCursor(Qt.PointingHandCursor)
-
         header_layout = QHBoxLayout(self.header)
-
-        # Toggle icon
         self.toggle_icon = QLabel("▼")
         self.toggle_icon.setStyleSheet("color: #FFFFFF; font-weight: bold;")
         header_layout.addWidget(self.toggle_icon)
-
-        # Date label
         self.title_label = QLabel(title)
         self.title_label.setFont(QFont("Arial", 12, QFont.Bold))
         self.title_label.setStyleSheet("color: #FFFFFF;")
         header_layout.addWidget(self.title_label)
-
         header_layout.addStretch()
-
-        # Content container
         self.content = QWidget()
         self.content_layout = QVBoxLayout(self.content)
         self.content_layout.setContentsMargins(10, 5, 10, 10)
         self.content_layout.setSpacing(5)
-
-        # Add to main layout
         self.layout.addWidget(self.header)
         self.layout.addWidget(self.content)
-
-        # Connect header click to toggle
         self.header.mousePressEvent = self.toggle_content
-
-        # Default to expanded
         self.is_expanded = True
 
     def toggle_content(self, event):
@@ -1067,12 +934,9 @@ class CollapsibleSection(QWidget):
 
 
 class LogEntryWidget(QFrame):
-    """Widget to display a single log entry with copy functionality"""
-
-    def __init__(self, time, app_name, error_msg):
+    def __init__(self, time_str, app_name, error_msg):
         super().__init__()
         self.error_msg = error_msg
-
         self.setStyleSheet(
             """
             QFrame {
@@ -1086,31 +950,21 @@ class LogEntryWidget(QFrame):
         """
         )
         self.setCursor(Qt.PointingHandCursor)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-
-        # Time and app name
         header = QHBoxLayout()
-
-        time_label = QLabel(time)
+        time_label = QLabel(time_str)
         time_label.setStyleSheet("color: #AAAAAA; font-weight: bold;")
         header.addWidget(time_label)
-
         app_label = QLabel(app_name)
         app_label.setStyleSheet("color: #FF79C6; font-weight: bold;")
         app_label.setAlignment(Qt.AlignRight)
         header.addWidget(app_label)
-
         layout.addLayout(header)
-
-        # Error message
         error_label = QLabel(error_msg[:100] + ("..." if len(error_msg) > 100 else ""))
         error_label.setStyleSheet("color: #F8F8F2;")
         error_label.setWordWrap(True)
         layout.addWidget(error_label)
-
-        # Label to show when copied
         self.copy_label = QLabel("Copied! ✓")
         self.copy_label.setStyleSheet("color: #50FA7B; font-weight: bold;")
         self.copy_label.setAlignment(Qt.AlignRight)
@@ -1118,25 +972,19 @@ class LogEntryWidget(QFrame):
         layout.addWidget(self.copy_label)
 
     def mousePressEvent(self, event):
-        # Copy error to clipboard
         clipboard = QApplication.clipboard()
         clipboard.setText(self.error_msg)
-
-        # Show "Copied!" message briefly
         self.copy_label.show()
         QTimer.singleShot(1500, self.copy_label.hide)
 
 
+# ---------------------- Main Entry Point ---------------------- #
 if __name__ == "__main__":
-    # Ensure apps folder exists
-    os.makedirs(APPS_FOLDER, exist_ok=True)
-
-    # Create a folder named "duck" on the C drive
+    # Create a folder named "duck" on the C drive as per your original code
     duck_folder = "C:\\duck"
     os.makedirs(duck_folder, exist_ok=True)
     print(f"Folder created at: {duck_folder}")
 
-    # Start the application
     app = QApplication(sys.argv)
     window = AppControl()
     window.show()
