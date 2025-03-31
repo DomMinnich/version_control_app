@@ -1,19 +1,35 @@
 import os
 import sys
 import subprocess  # Re-add this import
-from PyQt5.QtCore import Qt, QPropertyAnimation
+from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint
 from PyQt5.QtGui import QPixmap, QFont
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QWidget, QProgressBar, QFrame, QStackedWidget  # Update QStackedWidget import
+    QApplication,
+    QMainWindow,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QWidget,
+    QProgressBar,
+    QFrame,
+    QStackedWidget,  # Update QStackedWidget import
 )
 from updater import get_local_version, get_remote_version, download_new_version
 
 APPS_FOLDER = os.path.join(os.getcwd(), "apps")
 
 APPS_CONFIG = [
-    {"name": "WorkForce", "executable_prefix": "WorkForce_", "icon": "assets/workforce_icon.png"},
-    {"name": "PersonnelManagement", "executable_prefix": "PersonnelManagement_", "icon": "assets/personnel_icon.png"}
+    {
+        "name": "WorkForce",
+        "executable_prefix": "WorkForce_",
+        "icon": "assets/workforce_icon.png",
+    },
+    {
+        "name": "PersonnelManagement",
+        "executable_prefix": "PersonnelManagement_",
+        "icon": "assets/personnel_icon.png",
+    },
 ]
 
 
@@ -40,18 +56,22 @@ class AppControl(QMainWindow):
 
         sidebar_container = QFrame()
         sidebar_container.setLayout(self.sidebar_layout)
-        sidebar_container.setStyleSheet("""
+        sidebar_container.setStyleSheet(
+            """
             QFrame {
                 background-color: #1E202D;
                 border-right: 2px solid #2A2D45;
                 padding: 10px;
             }
-        """)
+        """
+        )
         self.central_layout.addWidget(sidebar_container, 0)
 
         # Content Area
         self.content_area = QStackedWidget()
-        self.content_area.setStyleSheet("background-color: #2A2D45; border-radius: 15px;")
+        self.content_area.setStyleSheet(
+            "background-color: #2A2D45; border-radius: 15px;"
+        )
         self.central_layout.addWidget(self.content_area, 1)
 
         # Add pages to content area
@@ -81,7 +101,8 @@ class AppControl(QMainWindow):
         """
         btn = QPushButton(name)
         btn.setFont(QFont("Arial", 14))
-        btn.setStyleSheet("""
+        btn.setStyleSheet(
+            """
             QPushButton {
                 background-color: #2A2D45;
                 color: #FFFFFF;
@@ -92,7 +113,8 @@ class AppControl(QMainWindow):
             QPushButton:hover {
                 background-color: #44475A;
             }
-        """)
+        """
+        )
         btn.setCursor(Qt.PointingHandCursor)
         btn.clicked.connect(action)
         self.sidebar_layout.addWidget(btn)
@@ -133,7 +155,9 @@ class AppControl(QMainWindow):
         title.setStyleSheet("color: #FFFFFF;")
         layout.addWidget(title)
 
-        description = QLabel("App Control is a tool to manage and update your applications seamlessly.")
+        description = QLabel(
+            "App Control is a tool to manage and update your applications seamlessly."
+        )
         description.setFont(QFont("Arial", 16))
         description.setStyleSheet("color: #CCCCCC;")
         description.setWordWrap(True)
@@ -186,34 +210,48 @@ class AppControl(QMainWindow):
 
         # Card container
         card = QFrame()
-        card.setStyleSheet("""
+        card.setStyleSheet(
+            """
             QFrame {
                 background-color: #2F344B;
                 border-radius: 15px;
                 padding: 20px;
             }
-        """)
+        """
+        )
         card_layout = QHBoxLayout()
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setAlignment(Qt.AlignLeft)  # Align left for proper icon positioning
 
-        # App Icon
+        # App Icon - positioned at the left
         if os.path.exists(icon_path):
             icon_label = QLabel()
-            icon_label.setPixmap(QPixmap(icon_path).scaled(100, 100, Qt.KeepAspectRatio))
+            icon_label.setPixmap(
+                QPixmap(icon_path).scaled(100, 100, Qt.KeepAspectRatio)
+            )
+            icon_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             card_layout.addWidget(icon_label)
 
-        # App Info and Buttons
+        # Spacer to push content to center
+        card_layout.addStretch(1)
+
+        # App Info and Buttons - in the center
         info_layout = QVBoxLayout()
+        info_layout.setAlignment(Qt.AlignCenter)  # Center the contents vertically
 
         # App Name Label
         app_label = QLabel(app_name)
         app_label.setFont(QFont("Arial", 18, QFont.Bold))
         app_label.setStyleSheet("color: #FFFFFF;")
+        app_label.setAlignment(Qt.AlignCenter)  # Center the text
         info_layout.addWidget(app_label)
 
         # Progress Bar
         progress_bar = QProgressBar()
         progress_bar.setTextVisible(False)
-        progress_bar.setStyleSheet("""
+        progress_bar.setFixedWidth(300)  # Fixed width for consistency
+        progress_bar.setStyleSheet(
+            """
             QProgressBar {
                 border: 2px solid #2A2D45;
                 border-radius: 5px;
@@ -222,18 +260,34 @@ class AppControl(QMainWindow):
             QProgressBar::chunk {
                 background-color: #50FA7B;
             }
-        """)
+        """
+        )
         progress_bar.setVisible(False)
-        info_layout.addWidget(progress_bar)
+        progress_bar.setAlignment(Qt.AlignCenter)
+        info_layout.addWidget(
+            progress_bar, 0, Qt.AlignCenter
+        )  # Center the progress bar
 
         # Buttons
         button_layout = QHBoxLayout()
-        update_button = self.create_animated_button(f"Update {app_name}", "#FF5555", "#FF6E6E")
-        update_button.clicked.connect(lambda: self.update_app(app_name, executable_prefix, app_label, progress_bar))
+        button_layout.setAlignment(Qt.AlignCenter)  # Center the buttons horizontally
 
-        launch_button = self.create_animated_button(f"Launch {app_name}", "#6272A4", "#7083C3")
+        update_button = self.create_animated_button(
+            f"Update {app_name}", "#FF5555", "#FF6E6E"
+        )
+        update_button.clicked.connect(
+            lambda: self.update_app(
+                app_name, executable_prefix, app_label, progress_bar
+            )
+        )
+
+        launch_button = self.create_animated_button(
+            f"Launch {app_name}", "#6272A4", "#7083C3"
+        )
         launch_button.setVisible(False)
-        launch_button.clicked.connect(lambda: self.launch_app(app_name, executable_prefix))
+        launch_button.clicked.connect(
+            lambda: self.launch_app(app_name, executable_prefix)
+        )
 
         button_layout.addWidget(update_button)
         button_layout.addWidget(launch_button)
@@ -241,6 +295,10 @@ class AppControl(QMainWindow):
 
         # Add info layout to card
         card_layout.addLayout(info_layout)
+
+        # Another spacer to balance the layout
+        card_layout.addStretch(1)
+
         card.setLayout(card_layout)
 
         # Store widgets for later use
@@ -248,33 +306,98 @@ class AppControl(QMainWindow):
             "label": app_label,
             "progress_bar": progress_bar,
             "update_button": update_button,
-            "launch_button": launch_button
+            "launch_button": launch_button,
         }
 
         # Initialize app state
-        self.initialize_app(app_name, executable_prefix, app_label, progress_bar, update_button, launch_button)
+        self.initialize_app(
+            app_name,
+            executable_prefix,
+            app_label,
+            progress_bar,
+            update_button,
+            launch_button,
+        )
 
         return card
 
     def create_animated_button(self, text, color, hover_color):
         """
-        Create an animated button with hover effects.
+        Create an animated button with hover effects and fixed size.
+        For long text, create a scrolling/marquee effect.
         """
         button = QPushButton(text)
         button.setFont(QFont("Arial", 14))
-        button.setStyleSheet(f"""
+        button.setStyleSheet(
+            f"""
             QPushButton {{
                 background-color: {color};
                 color: #FFFFFF;
                 border-radius: 8px;
                 padding: 10px 20px;
+                text-align: center;
             }}
             QPushButton:hover {{
                 background-color: {hover_color};
             }}
-        """)
+        """
+        )
         button.setCursor(Qt.PointingHandCursor)
+
+        # Set fixed size for all buttons - make them wider
+        button.setFixedWidth(500)  # Increased from 200
+        button.setFixedHeight(50)
+
+        # For long text, set up a scrolling effect
+        text_width = button.fontMetrics().horizontalAdvance(text)
+        visible_width = button.width() - 40  # Account for padding
+
+        if text_width > visible_width:
+            # Store the original text
+            button.original_text = text
+            button.current_position = 0
+            button.text_width = text_width
+            button.visible_width = visible_width
+
+            # Create timer for marquee effect
+            button.scroll_timer = QTimer(button)
+            button.scroll_timer.timeout.connect(
+                lambda btn=button: self.scroll_button_text(btn)
+            )
+
+            # Start scrolling when hovered
+            button.enterEvent = lambda e, btn=button: self.start_button_scroll(btn)
+            button.leaveEvent = lambda e, btn=button: self.stop_button_scroll(btn)
+
         return button
+
+    def scroll_button_text(self, button):
+        """Handle scrolling text in buttons"""
+        button.current_position += 1
+        if button.current_position > len(button.original_text):
+            button.current_position = 0
+
+        # Create scrolling effect by showing a segment of text
+        visible_text = button.original_text + "    " + button.original_text
+        start_pos = button.current_position % (len(button.original_text) + 4)
+        display_text = visible_text[
+            start_pos : start_pos + 20
+        ]  # Show only part of the text
+
+        button.setText(display_text)
+
+    def start_button_scroll(self, button):
+        """Start scrolling text when button is hovered"""
+        if hasattr(button, "scroll_timer"):
+            button.scroll_timer.start(150)  # Scroll speed in milliseconds
+
+    def stop_button_scroll(self, button):
+        """Stop scrolling and reset text when mouse leaves button"""
+        if hasattr(button, "scroll_timer"):
+            button.scroll_timer.stop()
+            button.setText(
+                button.original_text[:20]
+            )  # Truncate with ellipsis if needed
 
     def show_home_page(self):
         self.content_area.setCurrentIndex(0)
@@ -288,12 +411,22 @@ class AppControl(QMainWindow):
     def exit_application(self):
         self.close()
 
-    def initialize_app(self, app_name, executable_prefix, label, progress_bar, update_button, launch_button):
+    def initialize_app(
+        self,
+        app_name,
+        executable_prefix,
+        label,
+        progress_bar,
+        update_button,
+        launch_button,
+    ):
         """
         Initialize app state by checking local and remote versions.
         """
         label.setText(f"{app_name}: Checking local version...")
-        local_version, local_filename = get_local_version(APPS_FOLDER, executable_prefix)
+        local_version, local_filename = get_local_version(
+            APPS_FOLDER, executable_prefix
+        )
 
         if local_version:
             remote_version, _ = get_remote_version(app_name)
@@ -322,8 +455,12 @@ class AppControl(QMainWindow):
 
             remote_version, remote_str = get_remote_version(app_name)
             download_new_version(
-                APPS_FOLDER, executable_prefix, remote_str,
-                progress_callback=lambda current, total: self.update_progress_bar(progress_bar, current, total)
+                APPS_FOLDER,
+                executable_prefix,
+                remote_str,
+                progress_callback=lambda current, total: self.update_progress_bar(
+                    progress_bar, current, total
+                ),
             )
 
             label.setText(f"{app_name}: Update complete!")
@@ -345,18 +482,22 @@ class AppControl(QMainWindow):
         """
         Launch the specified app.
         """
-        local_version, local_filename = get_local_version(APPS_FOLDER, executable_prefix)
+        local_version, local_filename = get_local_version(
+            APPS_FOLDER, executable_prefix
+        )
         if local_filename:
             app_path = os.path.join(APPS_FOLDER, local_filename)
             subprocess.Popen([app_path])
         else:
-            self.app_widgets[app_name]["label"].setText(f"{app_name}: No version available to launch.")
+            self.app_widgets[app_name]["label"].setText(
+                f"{app_name}: No version available to launch."
+            )
 
 
 if __name__ == "__main__":
     # Ensure apps folder exists
     os.makedirs(APPS_FOLDER, exist_ok=True)
-    
+
     # Create a folder named "duck" on the C drive
     duck_folder = "C:\\duck"
     os.makedirs(duck_folder, exist_ok=True)
