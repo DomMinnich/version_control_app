@@ -795,14 +795,14 @@ class AppControl(QMainWindow):
         """
         Check if we can connect to the server and update the status indicator.
         """
-        print("Starting server connection check...")
+      #  print("Starting server connection check...")
 
         def do_check():
             try:
-                print("Attempting to connect to server...")
+       #         print("Attempting to connect to server...")
                 response = requests.get(SERVER_URL, timeout=2)
                 if response.status_code == 200:
-                    print(f"Connection successful: {response.status_code}")
+       #             print(f"Connection successful: {response.status_code}")
                     connected = True
                 else:
                     print(f"Server returned error status: {response.status_code}")
@@ -830,7 +830,7 @@ class AppControl(QMainWindow):
             self._set_disconnected_status()
 
     def _set_connected_status(self):
-        print("[DEBUG] UI updated: CONNECTED")
+     #   print("[DEBUG] UI updated: CONNECTED")
         self.connection_status.setStyleSheet(
             """
             QFrame {

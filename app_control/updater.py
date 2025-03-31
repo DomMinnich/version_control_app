@@ -10,12 +10,17 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 # Replace with your server's address if different
 SERVER_URL = "http://127.0.0.1:5000"
 
+
 def get_local_version(apps_folder, executable_prefix):
     """
     Check the local version of the app by scanning for executables with the given prefix.
     Returns a tuple of (version_tuple, filename) or (None, None) if not found.
     """
-    files = [f for f in os.listdir(apps_folder) if f.startswith(executable_prefix) and f.endswith(".exe")]
+    files = [
+        f
+        for f in os.listdir(apps_folder)
+        if f.startswith(executable_prefix) and f.endswith(".exe")
+    ]
     if not files:
         return None, None
 
@@ -29,6 +34,7 @@ def get_local_version(apps_folder, executable_prefix):
     versions.sort()  # Sorts by version tuple
     return versions[-1]  # Return the highest version
 
+
 def get_remote_version(app_name):
     """
     Fetch the latest version information from the server for the given app.
@@ -36,22 +42,27 @@ def get_remote_version(app_name):
     """
     response = requests.get(f"{SERVER_URL}/latest-version/{app_name}")
     response.raise_for_status()
-    latest_version = response.json()["latest_version"]
+    data = response.json()
+    latest_version = data[
+        "latest_version"
+    ]  # Use "latest_version" key from server response
     major, minor = latest_version.split(".")
     return (int(major), int(minor)), latest_version
+
 
 def generate_key(password, salt):
     """
     Generate an encryption key from a password and salt using PBKDF2HMAC.
     """
     kdf = PBKDF2HMAC(
-         algorithm=hashes.SHA256(),
-         length=32,
-         salt=salt,
-         iterations=100000,
-         backend=default_backend()
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+        backend=default_backend(),
     )
     return base64.urlsafe_b64encode(kdf.derive(password))
+
 
 def encrypt_file(input_file, output_file, key):
     """
@@ -64,7 +75,10 @@ def encrypt_file(input_file, output_file, key):
     with open(output_file, "wb") as f:
         f.write(encrypted)
 
-def download_new_version(apps_folder, executable_prefix, version_str, progress_callback=None):
+
+def download_new_version(
+    apps_folder, executable_prefix, version_str, progress_callback=None
+):
     """
     Download the latest app executable from the server, encrypt it, and save it locally.
 
@@ -104,6 +118,7 @@ def download_new_version(apps_folder, executable_prefix, version_str, progress_c
     print(f"Encrypted {filename} to {final_filepath}")
     return filename
 
+
 def check_for_updates(apps_folder, executable_prefix, app_name):
     """
     Check if the app needs an update by comparing the local and remote versions.
@@ -131,22 +146,25 @@ def check_for_updates(apps_folder, executable_prefix, app_name):
         print("No updates needed.")
         return local_filename
 
+
 if __name__ == "__main__":
     # For testing purposes, create a local 'apps' folder and run version checks.
     test_apps_folder = "apps"
     os.makedirs(test_apps_folder, exist_ok=True)
-    
+
     app_name = "WorkForce"
     executable_prefix = "WorkForce_"
-    
+
     # Check and print the local version.
-    local_version, local_filename = get_local_version(test_apps_folder, executable_prefix)
+    local_version, local_filename = get_local_version(
+        test_apps_folder, executable_prefix
+    )
     print("Local version:", local_version)
-    
+
     # Fetch and print the remote version.
     remote_version, remote_str = get_remote_version(app_name)
     print("Remote version:", remote_version)
-    
+
     # Optionally, trigger an update if needed.
     updated_filename = check_for_updates(test_apps_folder, executable_prefix, app_name)
     print("Updated executable filename:", updated_filename)

@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "WorkForce",
+      "executable_prefix": "WorkForce_",
+      "icon": "workforce_icon.png",
+      "version": "00.01"
+    },
+    {
+      "name": "PersonnelManagement",
+      "executable_prefix": "PersonnelManagement_",
+      "icon": "personnel_icon.png",
+      "version": "00.01"
+    },
+    {
+      "name": "PersonnelManagement2",
+      "executable_prefix": "PersonnelManagement2_",
+      "icon": "personnel_icon.png",
+      "version": "00.01"
+    },
+    {
+      "name": "PersonnelManagement3",
+      "executable_prefix": "PersonnelManagement3_",
+      "icon": "personnel_icon.png",
+      "version": "00.01"
+    }
+  ]
+}
