@@ -4,11 +4,14 @@ import json
 import datetime
 import subprocess
 import base64
+import threading
+import time
+import requests
 from cryptography.fernet import Fernet
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint
+from PyQt5.QtCore import Qt, QPropertyAnimation, QTimer, QPoint, pyqtSignal
 from PyQt5.QtGui import QPixmap, QFont, QIcon, QCursor
 from PyQt5.QtWidgets import (
     QApplication,
@@ -45,6 +48,10 @@ APPS_CONFIG = [
 
 
 class AppControl(QMainWindow):
+    connection_status_changed = pyqtSignal(
+        bool
+    )  # Signal to safely update UI from thread
+
     def __init__(self):
         super().__init__()
 
@@ -60,6 +67,15 @@ class AppControl(QMainWindow):
         if not os.path.exists(ERROR_LOG_FILE):
             with open(ERROR_LOG_FILE, "w") as f:
                 json.dump([], f)
+
+        # Connection status
+        self.server_connected = False
+        self.connection_check_timer = QTimer(self)
+        self.connection_check_timer.timeout.connect(self.check_server_connection)
+        self.connection_check_timer.start(10000)  # Check every 10 seconds
+
+        # Connect the signal to update connection status
+        self.connection_status_changed.connect(self.update_connection_status)
 
         # Main layout
         self.central_layout = QHBoxLayout()
@@ -102,6 +118,12 @@ class AppControl(QMainWindow):
         # Track running processes
         self.running_processes = {}
 
+        # Initialize server connection
+        self.check_server_connection()
+
+        # Delay the initial connection check slightly to let GUI finish drawing
+        QTimer.singleShot(500, self.check_server_connection)
+
     def create_sidebar(self):
         """
         Create a sidebar with navigation options.
@@ -112,7 +134,70 @@ class AppControl(QMainWindow):
         logo.setAlignment(Qt.AlignCenter)
         self.sidebar_layout.addWidget(logo)
 
-        # Sidebar buttons
+        # Connection status indicator with improved readability
+        self.connection_status = QFrame()
+        self.connection_status.setFixedHeight(60)  # Adjust height for better alignment
+        self.connection_status.setStyleSheet(
+            """
+            QFrame {
+                border-radius: 12px;
+                background-color: #33364D;
+                margin: 10px;
+                border: 1px solid #444760;
+            }
+            """
+        )
+
+        status_layout = QHBoxLayout(self.connection_status)
+        status_layout.setContentsMargins(
+            10, 0, 10, 0
+        )  # Adjust margins for better spacing
+        status_layout.setSpacing(10)  # Add spacing between elements
+        status_layout.setAlignment(Qt.AlignVCenter)  # Ensure vertical alignment
+
+        # Status icon
+        self.status_icon = QLabel("●")
+        self.status_icon.setFont(QFont("Arial", 20, QFont.Bold))  # Larger font for icon
+        self.status_icon.setStyleSheet(
+            "color: #FF5555;"
+        )  # Start with disconnected color
+        status_layout.addWidget(self.status_icon)
+
+        # Status text
+        self.status_text = QLabel("Checking...")
+        self.status_text.setFont(
+            QFont("Arial", 16, QFont.Bold)
+        )  # Slightly larger font for text
+        self.status_text.setStyleSheet("color: #FFFFFF;")
+        status_layout.addWidget(self.status_text)
+
+        # Spacer to push the refresh button to the right
+        status_layout.addStretch()
+
+        # Refresh button
+        refresh_btn = QPushButton("↻")
+        refresh_btn.setToolTip("Check connection")
+        refresh_btn.setFont(QFont("Arial", 14, QFont.Bold))  # Larger font for button
+        refresh_btn.setFixedSize(40, 40)  # Adjusted size for better visibility
+        refresh_btn.setStyleSheet(
+            """
+            QPushButton {
+                background-color: #44475A;
+                color: #FFFFFF;
+                border-radius: 20px;
+            }
+            QPushButton:hover {
+                background-color: #6272A4;
+            }
+            """
+        )
+        refresh_btn.setCursor(Qt.PointingHandCursor)
+        refresh_btn.clicked.connect(self.check_server_connection_immediate)
+        status_layout.addWidget(refresh_btn)
+
+        self.sidebar_layout.addWidget(self.connection_status)
+
+        # Sidebar buttons continue as before
         self.create_sidebar_button("Home", self.show_home_page)
         self.create_sidebar_button("Error Logs", self.show_error_logs_page)
         self.create_sidebar_button("About", self.show_about_page)
@@ -785,6 +870,127 @@ class AppControl(QMainWindow):
         except Exception as e:
             print(f"Failed to log error: {str(e)}")
 
+    def check_server_connection_immediate(self):
+        """
+        Immediately check the server connection status.
+        """
+        # Show checking state
+        self.status_text.setText("Checking...")
+        self.status_icon.setStyleSheet("color: #FFCC00;")  # Yellow while checking
+
+        # Clear any existing timers to avoid race conditions
+        if (
+            hasattr(self, "connection_check_thread")
+            and self.connection_check_thread.is_alive()
+        ):
+            return  # Don't start another check if one is already running
+
+        # Force immediate check
+        self.check_server_connection()
+
+    def check_server_connection(self):
+        """
+        Check if we can connect to the server and update the status indicator.
+        """
+        print("Starting server connection check...")
+
+        def do_check():
+            try:
+                print("Attempting to connect to server...")
+                response = requests.get("http://127.0.0.1:5000", timeout=2)
+                connected = True
+                print(f"Connection successful: status code {response.status_code}")
+            except requests.exceptions.ConnectionError:
+                print("Connection refused: Server is not running")
+                connected = False
+            except requests.exceptions.Timeout:
+                print("Connection timeout")
+                connected = False
+            except Exception as e:
+                print(f"Connection check failed: {str(e)}")
+                connected = False
+
+            # Emit signal to update GUI safely in main thread
+            self.connection_status_changed.emit(connected)
+
+        self.connection_check_thread = threading.Thread(target=do_check, daemon=True)
+        self.connection_check_thread.start()
+
+    def update_connection_status(self, connected):
+        """
+        Update the UI connection status indicator with improved visual feedback.
+        Called safely via Qt signal.
+        """
+        self.server_connected = connected
+
+        if connected:
+            self._set_connected_status()
+        else:
+            self._set_disconnected_status()
+
+    def _set_connected_status(self):
+        """Helper method to update UI for connected status"""
+        print("[DEBUG] UI updated: CONNECTED")
+        self.connection_status.setStyleSheet(
+            """
+            QFrame {
+                border-radius: 12px;
+                background-color: rgba(80, 250, 123, 0.15);  /* Green tint background */
+                margin: 5px 10px 10px 10px;
+                border: 1px solid rgba(80, 250, 123, 0.5);  /* Green border */
+            }
+        """
+        )
+        self.status_icon.setStyleSheet("color: #50FA7B;")
+        self.status_text.setText("Connected")
+        self.status_text.setStyleSheet("color: #50FA7B; font-size: 20px; font-weight: bold;")
+        # Start the connection animation
+        self.start_connection_animation()
+
+    def _set_disconnected_status(self):
+        """Helper method to update UI for disconnected status"""
+        print("[DEBUG] UI updated: DISCONNECTED")
+        self.connection_status.setStyleSheet(
+            """
+            QFrame {
+                border-radius: 12px;
+                background-color: rgba(255, 85, 85, 0.15);  /* Red tint background */
+                margin: 5px 10px 15px 10px;
+                border: 1px solid rgba(255, 85, 85, 0.5);  /* Red border */
+            }
+        """
+        )
+        self.status_icon.setStyleSheet("color: #FF5555;")
+        self.status_text.setText("Disconnected")
+
+    def start_connection_animation(self):
+        """
+        Start a subtle pulsing animation for the connection indicator when connected.
+        """
+
+        # Use a timer to create a "breathing" effect
+        def pulse_animation():
+            if not self.server_connected:
+                return
+
+            # Toggle between normal and slight dimming for pulsing effect
+            current_style = self.status_icon.styleSheet()
+            if "rgba(80, 250, 123, 0.6)" in current_style:
+                self.status_icon.setStyleSheet(
+                    "color: #50FA7B;"
+                )  # Full brightness green
+            else:
+                self.status_icon.setStyleSheet(
+                    "color: rgba(80, 250, 123, 0.6);"
+                )  # Dimmed green
+
+            # Continue animation if still connected
+            if self.server_connected:
+                QTimer.singleShot(800, pulse_animation)
+
+        # Start the animation
+        pulse_animation()
+
 
 # Add these new classes at the end of the file
 class CollapsibleSection(QWidget):
@@ -934,4 +1140,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = AppControl()
     window.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec_())
