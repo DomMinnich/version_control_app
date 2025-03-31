@@ -1,5 +1,7 @@
 # App Version Control System
 
+![image](https://github.com/user-attachments/assets/fd5a106b-9d5d-4a75-b407-fb3a6f7afa14)
+
 ## Project Overview
 
 This project is an application management system that allows users to monitor, update, and launch applications from a central interface. It consists of two main components:
